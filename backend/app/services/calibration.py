@@ -25,13 +25,22 @@ PROBES = {
 }
 
 
-def _top1(qemb: np.ndarray, index, valid: np.ndarray) -> np.ndarray:
-    """Best similarity per query, ignoring stub passages (same filter as the API)."""
-    return (qemb @ index.embeddings[valid].T).max(axis=1)
+def _signals(qemb: np.ndarray, index, valid: np.ndarray):
+    """Per query: (top-1 similarity, gap between top-1 and top-10), stub passages excluded."""
+    scores = qemb @ index.embeddings[valid].T
+    top1 = scores.max(axis=1)
+    top10 = np.partition(scores, -10, axis=1)[:, -10]
+    return top1, top1 - top10
 
 
-def _pct(x, *qs):
-    return " / ".join(f"{np.percentile(x, q):.3f}" for q in qs)
+def _auc(real: np.ndarray, probe: np.ndarray) -> float:
+    """P(a random real query scores higher than a random off-topic probe)."""
+    return float((real[:, None] > probe[None, :]).mean())
+
+
+def _line(name: str, real: np.ndarray, probe: np.ndarray) -> str:
+    return (f"{name}: probes max {probe.max():.3f} | real p5 {np.percentile(real, 5):.3f}"
+            f" median {np.median(real):.3f} | AUC {_auc(real, probe):.2f}")
 
 
 if __name__ == "__main__":
@@ -41,22 +50,23 @@ if __name__ == "__main__":
     real_emb = {l: encode_queries(build_queries(l)["query"].tolist()[:N_REAL], show_progress=True)
                 for l in LANGUAGES}
 
-    print(f"\nModel: {EMBEDDING_MODEL}   (top-1 cosine similarity; stub passages excluded)")
+    print(f"\nModel: {EMBEDDING_MODEL}   (stub passages excluded; AUC 1.0 = perfect, 0.5 = useless)")
     for cl in LANGUAGES:
         index = dense_retrieval.get_index(cl)
         passages = _passages(cl)
         valid = np.array([len(split_title(passages[d]["text"])[1]) >= MIN_BODY_CHARS
                           for d in index.doc_ids])
+        others = [l for l in LANGUAGES if l != cl]
 
-        probes = np.concatenate([_top1(probe_emb[ql], index, valid) for ql in LANGUAGES])
-        same = _top1(real_emb[cl], index, valid)
-        cross = np.concatenate([_top1(real_emb[ql], index, valid) for ql in LANGUAGES if ql != cl])
-        threshold = float(probes.max()) + 0.005
+        def collect(emb_by_lang, langs):
+            parts = [_signals(emb_by_lang[l], index, valid) for l in langs]
+            return (np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts]))
+
+        real = {"same": collect(real_emb, [cl]), "cross": collect(real_emb, others)}
+        probe = {"same": collect(probe_emb, [cl]), "cross": collect(probe_emb, others)}
 
         print(f"\n== Corpus: {cl} ==")
-        print(f"  off-topic probes   min / median / max : "
-              f"{probes.min():.3f} / {np.median(probes):.3f} / {probes.max():.3f}")
-        print(f"  real, same-lang    p5 / p25 / median  : {_pct(same, 5, 25, 50)}")
-        print(f"  real, cross-lang   p5 / p25 / median  : {_pct(cross, 5, 25, 50)}")
-        print(f"  threshold = max probe + 0.005 = {threshold:.3f}  ->  would wrongly flag "
-              f"{(same < threshold).mean():.1%} of same-lang and {(cross < threshold).mean():.1%} of cross-lang real queries")
+        for rel in ("same", "cross"):
+            print(f"  [{rel}-lang]")
+            print("    similarity  " + _line("", real[rel][0], probe[rel][0])[2:])
+            print("    top1-top10  " + _line("", real[rel][1], probe[rel][1])[2:])
