@@ -11,6 +11,7 @@ RRF_K = 60          # standard Reciprocal Rank Fusion constant
 BM25_WEIGHT = 1.0   # fusion weights: dense is more reliable here (esp. cross-lingual),
 DENSE_WEIGHT = 2.0  # so it gets double the vote. Try 1.0 / 3.0 and re-run evaluation.
 CANDIDATES = 50     # how many results each retriever contributes to fusion
+MIN_BODY_CHARS = 50 # skip stub passages (e.g. a title + 2 words) in search results
 
 # Unicode block -> language (the 3 non-Latin languages in this project)
 _SCRIPT_RANGES = [
@@ -77,7 +78,7 @@ def search(
     if corpus_lang not in LANGUAGES:
         raise ValueError(f"Unsupported corpus language '{corpus_lang}'")
     query_lang = query_lang or detect_language(query)
-    n = max(top_k, CANDIDATES) if mode == "hybrid" else top_k
+    n = max(top_k * 3, CANDIDATES)  # oversample: stub passages are filtered out below
 
     bm25_hits = (
         bm25.get_index(corpus_lang).search(query, n, query_lang=query_lang)
@@ -98,9 +99,13 @@ def search(
 
     passages = _passages(corpus_lang)
     results = []
-    for doc_id, score in ranked[:top_k]:
+    for doc_id, score in ranked:
         p = passages[doc_id]
+        if len(split_title(p["text"])[1]) < MIN_BODY_CHARS:
+            continue
         results.append({**p, "score": float(score)})
+        if len(results) == top_k:
+            break
     return query_lang, results
 
 
