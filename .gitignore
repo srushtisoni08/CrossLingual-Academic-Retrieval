@@ -2,3 +2,5 @@ backend/data/raw/*
 backend/models/*
 backend/app/__pycache__/*
 backend/app/services/__pycache__/*
+backend/app/routes/__pycache__/*
+backend/app/schemas/__pycache__/*

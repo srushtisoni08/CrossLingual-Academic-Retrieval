@@ -70,19 +70,36 @@ class BM25Index:
         return [(self.doc_ids[i], float(scores[i])) for i in top if scores[i] > 0]
 
     # ---- persistence ----
+    # Save plain data (not the class object) so the file loads no matter
+    # whether it was built via `python -m app.services.bm25` or from the API.
     @staticmethod
     def path_for(lang: str) -> Path:
-        return MODELS_DIR / f"bm25_{lang}.joblib"
+        return MODELS_DIR / f"bm25_{lang}_v2.joblib"
 
     def save(self) -> Path:
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         path = self.path_for(self.lang)
-        joblib.dump(self, path)
+        joblib.dump(
+            {
+                "lang": self.lang,
+                "k1": self.k1,
+                "b": self.b,
+                "doc_ids": self.doc_ids,
+                "vocab": self.vocab,
+                "matrix": self.matrix,
+            },
+            path,
+        )
         return path
 
     @classmethod
     def load(cls, lang: str) -> "BM25Index":
-        return joblib.load(cls.path_for(lang))
+        state = joblib.load(cls.path_for(lang))
+        index = cls(state["lang"], state["k1"], state["b"])
+        index.doc_ids = state["doc_ids"]
+        index.vocab = state["vocab"]
+        index.matrix = state["matrix"]
+        return index
 
 
 def build_index(lang: str, save: bool = True) -> BM25Index:
