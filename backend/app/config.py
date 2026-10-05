@@ -16,7 +16,7 @@ LANGUAGES = {
 
 SPLIT = "train"  
 
-EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+EMBEDDING_MODEL = "intfloat/multilingual-e5-base"   
 EMBEDDING_BATCH_SIZE = 32
 MAX_SEQ_LENGTH = 256
 
@@ -24,3 +24,10 @@ MAX_SEQ_LENGTH = 256
 _IS_E5 = "e5" in EMBEDDING_MODEL.lower()
 QUERY_PREFIX = "query: " if _IS_E5 else ""
 PASSAGE_PREFIX = "passage: " if _IS_E5 else ""
+
+TRANSLATE_QUERY = True
+TRANSLATION_MODEL = "facebook/nllb-200-distilled-600M"
+
+RERANK = True
+RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+RERANK_TOP_N = 30

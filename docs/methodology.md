@@ -81,3 +81,23 @@ Model: intfloat/multilingual-e5-small   (stub passages excluded; AUC 1.0 = perfe
     similarity  probes max 0.821 | real p5 0.791 median 0.832 | AUC 0.84
     top1-top10  probes max 0.024 | real p5 0.015 median 0.042 | AUC 0.92
 (venv) PS D:\nlp\car\backend> 
+
+
+
+en -> en              0.997     0.883
+en -> hi              0.953     0.760
+en -> bn              0.927     0.723
+en -> te              0.914     0.709
+hi -> en              0.893     0.683
+hi -> hi              0.980     0.838
+hi -> bn              0.938     0.760
+hi -> te              0.918     0.729
+bn -> en              0.815     0.610
+bn -> hi              0.922     0.734
+bn -> bn              0.969     0.821
+bn -> te              0.892     0.697
+te -> en              0.798     0.589
+te -> hi              0.899     0.707
+te -> bn              0.887     0.688
+te -> te              0.964     0.815
+(venv) PS D:\nlp\car\backend> 

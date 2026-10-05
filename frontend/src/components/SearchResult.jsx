@@ -16,7 +16,7 @@ export default function SearchResult({ result, position }) {
         <p className="result-snippet" lang={result.lang}>{result.snippet}</p>
         <div className="result-meta">
           <span className="badge">{langName(result.lang)}</span>
-          <span>similarity {result.score.toFixed(3)}</span>
+          <span>relevance {result.score.toFixed(3)}</span>
         </div>
       </div>
     </li>

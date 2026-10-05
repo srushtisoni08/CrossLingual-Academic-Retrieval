@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 
-from app.config import LANGUAGES
+from app.config import LANGUAGES, RERANK, RERANK_TOP_N, TRANSLATE_QUERY
 from app.services import bm25, dense_retrieval
 from app.services.data_loader import build_corpus
 
@@ -78,35 +78,52 @@ def search(
     if corpus_lang not in LANGUAGES:
         raise ValueError(f"Unsupported corpus language '{corpus_lang}'")
     query_lang = query_lang or detect_language(query)
-    n = max(top_k * 3, CANDIDATES)  # oversample: stub passages are filtered out below
+    n = max(top_k * 3, CANDIDATES)
+    cross = query_lang != corpus_lang
 
-    bm25_hits = (
-        bm25.get_index(corpus_lang).search(query, n, query_lang=query_lang)
-        if mode in ("bm25", "hybrid") else []
-    )
-    dense_hits = (
-        dense_retrieval.get_index(corpus_lang).search(query, n)
-        if mode in ("dense", "hybrid") else []
-    )
+    translated = None
+    if cross and TRANSLATE_QUERY:
+        from app.services.translate import translate
+        translated = translate(query.strip(), query_lang, corpus_lang)
 
-    if mode == "bm25":
-        ranked = bm25_hits
-    elif mode == "dense":
-        ranked = dense_hits
+    dense_idx = dense_retrieval.get_index(corpus_lang) if mode in ("dense", "hybrid") else None
+    bm25_idx = bm25.get_index(corpus_lang) if mode in ("bm25", "hybrid") else None
+
+    rankings, weights = [], []
+    if dense_idx:
+        rankings.append(dense_idx.search(query, n))
+        weights.append(DENSE_WEIGHT)
+        if translated:
+            rankings.append(dense_idx.search(translated, n))
+            weights.append(DENSE_WEIGHT)
+    if bm25_idx:
+        if not cross:
+            rankings.append(bm25_idx.search(query, n, query_lang=query_lang))
+            weights.append(BM25_WEIGHT)
+        elif translated:  # BM25 only works across scripts via the translated query
+            rankings.append(bm25_idx.search(translated, n, query_lang=corpus_lang))
+            weights.append(BM25_WEIGHT)
+
+    if len(rankings) == 1:
+        ranked = rankings[0]
     else:
-        # Cross-script queries give BM25 no matches -> fusion naturally falls back to dense
-        ranked = _rrf([[d for d, _ in bm25_hits], [d for d, _ in dense_hits]])
+        ranked = _rrf([[d for d, _ in r] for r in rankings], tuple(weights))
 
     passages = _passages(corpus_lang)
-    results = []
+    pool_size = max(top_k, RERANK_TOP_N) if RERANK else top_k
+    pool = []
     for doc_id, score in ranked:
         p = passages[doc_id]
         if len(split_title(p["text"])[1]) < MIN_BODY_CHARS:
             continue
-        results.append({**p, "score": float(score)})
-        if len(results) == top_k:
+        pool.append({**p, "score": float(score)})
+        if len(pool) == pool_size:
             break
-    return query_lang, results
+
+    if RERANK and pool:
+        from app.services.reranker import rerank
+        pool = rerank(query, pool)
+    return query_lang, pool[:top_k] 
 
 
 def warm_up() -> None:
@@ -118,4 +135,10 @@ def warm_up() -> None:
         dense_retrieval.get_index(lang)
         _passages(lang)
     encode_queries(["warm up"])
+    if TRANSLATE_QUERY:
+        from app.services.translate import translate
+        translate("warm up", "en", "hi")
+    if RERANK:
+        from app.services.reranker import rerank
+        rerank("warm up", [{"text": "warm up"}])
     logger.info("Retrieval indexes ready for: %s", ", ".join(LANGUAGES))
