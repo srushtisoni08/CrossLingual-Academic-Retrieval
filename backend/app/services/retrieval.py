@@ -11,6 +11,11 @@ RRF_K = 60          # standard Reciprocal Rank Fusion constant
 BM25_WEIGHT = 1.0   # fusion weights: dense is more reliable here (esp. cross-lingual),
 DENSE_WEIGHT = 2.0  # so it gets double the vote. Try 1.0 / 3.0 and re-run evaluation.
 CANDIDATES = 50     # how many results each retriever contributes to fusion
+# Cross-lingual weights, chosen from docs/methodology.md section 4.5:
+# the translated query is the strong signal; the original query and BM25 are low-weight helpers.
+CROSS_TRANS_WEIGHT = 2.0
+CROSS_ORIG_WEIGHT = 0.5
+CROSS_BM25_WEIGHT = 0.5
 MIN_BODY_CHARS = 50 # skip stub passages (e.g. a title + 2 words) in search results
 
 # Unicode block -> language (the 3 non-Latin languages in this project)
@@ -91,10 +96,16 @@ def search(
 
     rankings, weights = [], []
     if dense_idx:
-        rankings.append(dense_idx.search(query, n))
-        weights.append(DENSE_WEIGHT)
         if translated:
+            # dense mode: translated query only (best measured MRR);
+            # hybrid mode: original query joins at low weight as a safety net.
             rankings.append(dense_idx.search(translated, n))
+            weights.append(CROSS_TRANS_WEIGHT)
+            if mode == "hybrid":
+                rankings.append(dense_idx.search(query, n))
+                weights.append(CROSS_ORIG_WEIGHT)
+        else:  # same-language query, or translation unavailable
+            rankings.append(dense_idx.search(query, n))
             weights.append(DENSE_WEIGHT)
     if bm25_idx:
         if not cross:
@@ -102,7 +113,7 @@ def search(
             weights.append(BM25_WEIGHT)
         elif translated:  # BM25 only works across scripts via the translated query
             rankings.append(bm25_idx.search(translated, n, query_lang=corpus_lang))
-            weights.append(BM25_WEIGHT)
+            weights.append(CROSS_BM25_WEIGHT)
 
     if len(rankings) == 1:
         ranked = rankings[0]

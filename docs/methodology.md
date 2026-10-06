@@ -22,7 +22,7 @@ query ─► language detection ─► [translate to corpus language, cross-ling
 2. **Query translation (cross-lingual queries only).** The query is translated into the corpus language with NLLB-200 (`facebook/nllb-200-distilled-600M`, int8-quantised for CPU, beam size 2). Translations are cached in memory. Same-language queries skip this step.
 3. **Dense retrieval.** Passages are embedded once with `multilingual-e5` (`query:` / `passage:` prefixes, L2-normalised, 256 tokens maximum), so search is one matrix multiplication. For cross-lingual queries both the original and the translated query are searched.
 4. **BM25.** Okapi BM25 (k1 = 1.5, b = 0.75) over a sparse matrix. The tokenizer keeps Indic combining marks (a plain `\w+` splits Hindi, Bengali and Telugu words at vowel signs) and removes small stopword lists. For cross-lingual queries BM25 is run on the translated query, because BM25 cannot match across scripts.
-5. **Fusion.** Weighted Reciprocal Rank Fusion with k = 60: each retriever contributes `weight / (60 + rank)` per passage. Weights currently in the app: dense (original query) 2, dense (translated query) 2, BM25 1 (see section 4.5, which shows these should be changed).
+5. **Fusion.** Weighted Reciprocal Rank Fusion with k = 60: each retriever contributes `weight / (60 + rank)` per passage. For cross-lingual queries the weights are translated-query dense 2, original-query dense 0.5 and BM25 0.5 (hybrid mode); in `dense` mode only the translated-query dense search is used. For same-language queries, dense 2 and BM25 1. The choice is justified in section 4.5.
 6. **Reranking (optional, off by default).** A cross-encoder (`BAAI/bge-reranker-v2-m3`) reads the original query together with each of the top 30 candidates and reorders them.
 
 Search modes exposed by the API: `bm25`, `dense` and `hybrid`. In `dense` mode BM25 is not run; in `bm25` mode only BM25 is used. Stub passages (body shorter than 50 characters) are removed from results.
@@ -75,26 +75,35 @@ Two observations follow from these cases:
 2. When all dense scores sit at the noise level, rank fusion cannot tell them apart from a real signal, so dense-only mode loses what BM25 found.
 
 ### 4.5 Full-pipeline evaluation (query translation and fusion)
-`evaluate_pipeline.py` compares retrieval strategies on 200 randomly sampled queries (fixed seed) for each of four cross-lingual pairs. Recall@10 / MRR@10. With 200 queries the standard error of MRR@10 is about 0.025, so differences smaller than about 0.03 should not be over-interpreted.
+`evaluate_pipeline.py` compares retrieval strategies on 200 randomly sampled queries (fixed seed) for each of four cross-lingual pairs, 800 queries in total. Recall@10 / MRR@10. With 200 queries per pair the standard error of MRR@10 is about 0.025, so differences smaller than about 0.03 within a pair should not be over-interpreted.
 
-| Strategy | en → te | hi → en | te → en | All pairs combined |
-|---|---|---|---|---|
-| Dense, original query | 0.905 / 0.697 | 0.895 / 0.670 | 0.750 / 0.520 | 0.875 / 0.667 |
-| **Dense, translated query** | 0.900 / **0.745** | 0.985 / **0.853** | 0.970 / **0.829** | 0.951 / **0.806** |
-| BM25, translated query | 0.655 / 0.469 | 0.920 / 0.737 | 0.890 / 0.720 | 0.801 / 0.618 |
-| Fusion: dense orig 2 + dense trans 2 (`dense` mode) | 0.940 / 0.748 | 0.950 / 0.795 | 0.930 / 0.681 | 0.948 / 0.758 |
-| Fusion: BM25 1 + dense orig 2 + dense trans 2 (`hybrid`) | 0.940 / 0.736 | 0.970 / 0.836 | 0.965 / 0.753 | 0.958 / 0.772 |
-| Fusion: dense trans 2 + BM25 1 | 0.885 / 0.674 | 0.980 / 0.849 | 0.960 / 0.816 | 0.938 / 0.762 |
-| Fusion: dense orig 1 + dense trans 1 + BM25 1 | 0.925 / 0.708 | 0.995 / 0.830 | 0.975 / 0.776 | 0.964 / 0.763 |
-
-The "all pairs combined" column covers four pairs (800 queries); the en → hi results are included in it but its separate row was not captured here.
+| Strategy | en → hi | en → te | hi → en | te → en | All four pairs |
+|---|---|---|---|---|---|
+| Dense, original query | 0.950 / 0.780 | 0.905 / 0.697 | 0.895 / 0.670 | 0.750 / 0.520 | 0.875 / 0.667 |
+| Dense, translated query | 0.950 / 0.799 | 0.900 / 0.745 | 0.985 / 0.853 | 0.970 / 0.829 | 0.951 / 0.806 |
+| BM25, translated query | 0.740 / 0.545 | 0.655 / 0.469 | 0.920 / 0.737 | 0.890 / 0.720 | 0.801 / 0.618 |
+| Fusion: dense orig 2 + dense trans 2 | 0.970 / 0.809 | 0.940 / 0.748 | 0.950 / 0.795 | 0.930 / 0.681 | 0.948 / 0.758 |
+| Fusion: BM25 1 + dense orig 2 + dense trans 2 | 0.955 / 0.761 | 0.940 / 0.736 | 0.970 / 0.836 | 0.965 / 0.753 | 0.958 / 0.772 |
+| Fusion: dense trans 2 + BM25 1 | 0.925 / 0.709 | 0.885 / 0.674 | 0.980 / 0.849 | 0.960 / 0.816 | 0.938 / 0.762 |
+| Fusion: dense orig 1 + dense trans 1 + BM25 1 | 0.960 / 0.739 | 0.925 / 0.708 | 0.995 / 0.830 | 0.975 / 0.776 | 0.964 / 0.763 |
+| Fusion: dense trans 2 + dense orig 0.5 | 0.955 / 0.808 | 0.925 / 0.751 | 0.970 / 0.843 | 0.965 / 0.776 | 0.954 / 0.795 |
+| Fusion: dense trans 2 + dense orig 1 | 0.960 / 0.809 | 0.930 / 0.750 | 0.960 / 0.832 | 0.955 / 0.747 | 0.951 / 0.784 |
+| Fusion: dense trans 2 + dense orig 0.5 + BM25 0.5 | 0.960 / 0.759 | 0.920 / 0.726 | 0.995 / 0.850 | 0.970 / 0.807 | 0.961 / 0.785 |
+| Fusion: dense trans 2 + dense orig 1 + BM25 0.5 | 0.965 / 0.766 | 0.940 / 0.739 | 0.990 / 0.842 | 0.970 / 0.787 | 0.966 / 0.784 |
+| Fusion: dense trans 3 + dense orig 1 + BM25 1 | 0.960 / 0.753 | 0.925 / 0.720 | 0.995 / 0.853 | 0.975 / 0.802 | 0.964 / 0.782 |
 
 Findings:
-- **Translating the query is the largest single improvement for queries written in Hindi or Telugu searching the English corpus.** Dense search on the translated query raises MRR@10 from 0.670 to 0.853 (hi → en) and from 0.520 to 0.829 (te → en), and Recall@10 from 0.75 to 0.97 for te → en. For en → te the gain is smaller (0.697 to 0.745). Across all pairs MRR@10 rises from 0.667 to 0.806.
-- **The original query adds noise when fused at full weight.** The setting used by the app in `dense` mode (original and translated query, equal weight) is clearly worse than dense search on the translation alone for te → en (MRR 0.681 against 0.829) and hi → en (0.795 against 0.853). The original query does help Recall@10 for en → te (0.940 against 0.900), so it is useful as a lower-weighted safety net but not as an equal partner.
-- **BM25 on the translated query is strong into English and weak into Telugu.** MRR@10 is 0.72 to 0.74 for hi → en and te → en, but 0.47 for en → te, most likely because Telugu is agglutinative and words carry many suffixes that exact-token matching misses.
-- **Adding BM25 to the fusion did not beat translated-dense alone on MRR@10.** It does increase Recall@10 (best combined value 0.964 for the equal-weight three-way fusion, against 0.951), so it helps find the passage somewhere in the top 10 but does not put it higher.
-- **Conclusion for the default configuration:** for cross-lingual queries, dense search on the translated query should be the main signal, with the original query and BM25 at lower weight. The weights below this line were chosen from the table above and are still to be confirmed with the extended weighting comparison in `evaluate_pipeline.py`.
+- **Translating the query is the largest single improvement, especially into English.** Dense search on the translated query raises MRR@10 from 0.670 to 0.853 (hi → en) and from 0.520 to 0.829 (te → en), and Recall@10 for te → en from 0.75 to 0.97. Into Hindi and Telugu the gain is smaller (0.780 to 0.799 and 0.697 to 0.745), because the cross-lingual embedding already works reasonably when the corpus is an Indic language. Across all four pairs MRR@10 rises from 0.667 to 0.806 (+0.14).
+- **Dense search on the translated query alone is the best overall strategy by MRR@10 (0.806).** The best fusion that keeps the original query (translated 2 + original 0.5) reaches 0.795 and 0.954 Recall@10; the difference is within noise overall, but it is larger for te → en (0.776 against 0.829).
+- **Fusing the original query at full weight hurts.** The first configuration used by the app (original and translated query at equal weight) gives 0.758 combined, and only 0.681 for te → en, because the weak original-query ranking outvotes the good translated one.
+- **BM25 lowers MRR@10 in almost every combination, but can raise Recall@10.** On the translated query it works well into English (MRR 0.72 to 0.74) and poorly into Telugu (0.47), most likely because Telugu words carry many suffixes that exact-token matching misses. Adding it to the fusion reduces MRR@10 for en → hi (0.808 to 0.759) and en → te (0.751 to 0.726); the best Recall@10 values (0.961 to 0.966) all include BM25, a gain of about 0.01 to 0.015 over dense alone.
+
+**Settings adopted in the app (cross-lingual queries):**
+- `dense` mode (default): dense search on the translated query only. If translation is unavailable, the original query is used.
+- `hybrid` mode: translated dense (weight 2) + original dense (0.5) + BM25 on the translated query (0.5), which gave 0.785 MRR@10 and 0.961 Recall@10.
+- Same-language queries are unchanged: the original query with dense (2) and BM25 (1) in hybrid mode.
+
+These weights were chosen on the same 800 queries used to compare them, so the reported numbers are somewhat optimistic. A fresh sample (a different seed or a different pair such as bn → hi) would give an unbiased estimate.
 
 ## 5. Engineering notes
 - **Reranker cost.** Scoring 30 candidates with `bge-reranker-v2-m3` took about 80 seconds for one search on a CPU-only machine (two batches of about 40 seconds), and requests queued behind each other. The reranker is therefore disabled by default (`RERANK = False`) and is intended for a GPU or offline evaluation.
@@ -108,10 +117,10 @@ Findings:
 - The non-English text appears to be translated from English, so results may differ on natively written data.
 - Translation quality affects results. NLLB can transliterate named entities in ways that differ from the corpus spelling, and a wrong translation sends both the dense and BM25 searches the wrong way.
 - Language detection is script-based and does not handle romanised text or mixed-language queries.
-- The fusion weights currently used by the app were set by hand. Section 4.5 shows that they are not the best of the settings tried, and they will be updated.
+- The cross-lingual fusion weights were chosen on the same 800 queries used to compare them, so the reported numbers are slightly optimistic, and only four of the twelve cross-lingual pairs were evaluated (en → hi, en → te, hi → en, te → en).
 
 ## 7. Possible future work
-- Tune the fusion weights and the default mode from the full-pipeline evaluation.
+- Re-check the fusion weights on a fresh sample and on the remaining language pairs (for example bn → en, hi → te).
 - Use a GPU to enable the cross-encoder reranker, or a smaller multilingual reranker.
 - Fine-tune the embedding model on the training triplets.
 - Detect romanised queries and transliterate them.
