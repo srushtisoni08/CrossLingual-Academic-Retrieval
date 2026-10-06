@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -20,6 +21,7 @@ ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     retrieval.warm_up()  # builds any missing index, loads model once
+    threading.Thread(target=retrieval.warm_up_optional, daemon=True).start()
     yield
 
 

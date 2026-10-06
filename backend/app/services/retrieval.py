@@ -135,10 +135,16 @@ def warm_up() -> None:
         dense_retrieval.get_index(lang)
         _passages(lang)
     encode_queries(["warm up"])
+    logger.info("Retrieval indexes ready for: %s", ", ".join(LANGUAGES))
+
+
+def warm_up_optional() -> None:
+    """Preload the translation / reranker models in the background so the server
+    starts accepting requests immediately (first cross-lingual query waits for it)."""
     if TRANSLATE_QUERY:
         from app.services.translate import translate
         translate("warm up", "en", "hi")
     if RERANK:
         from app.services.reranker import rerank
         rerank("warm up", [{"text": "warm up"}])
-    logger.info("Retrieval indexes ready for: %s", ", ".join(LANGUAGES))
+    logger.info("Translation/rerank models ready")
