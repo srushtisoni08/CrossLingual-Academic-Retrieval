@@ -446,7 +446,7 @@ CPU execution is possible but can be slow.
 ## 1. Clone the Repository
 
 ``` bash
-git clone <your-repository-url>
+git clone https://github.com/srushtisoni08/CrossLingual-Academic-Retrieval
 cd CrossLingual-Academic-Retrieval
 ```
 
