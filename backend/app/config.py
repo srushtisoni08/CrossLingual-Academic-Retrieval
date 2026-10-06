@@ -28,6 +28,6 @@ PASSAGE_PREFIX = "passage: " if _IS_E5 else ""
 TRANSLATE_QUERY = True
 TRANSLATION_MODEL = "facebook/nllb-200-distilled-600M"
 
-RERANK = True
+RERANK = False
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 RERANK_TOP_N = 30
